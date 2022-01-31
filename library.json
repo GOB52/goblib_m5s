@@ -1,0 +1,30 @@
+{
+  "name": "goblib_m5s",
+  "description": "Library for C++11 or later. Depends on M5Stack releated.",
+  "keywords": "m5stack",
+  "authors": {
+    "name": "GOB",
+    "url": "https://github.com/GOB52",
+    "maintainer": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GOB52/goblib_m5s.git"
+  },
+  "version": "0.1.0",
+  "build": {
+    "libArchive": false
+  },
+  "license": "MIT",
+  "platforms": [
+    "espressif32"
+  ],
+  "frameworks": [
+    "arduino"
+  ],
+  "dependencies": {
+    "lovyan03/LovyanGFX": "^0.4.15",
+    "greiman/SdFat": "^2.1.2",
+    "goblib": "^0.1.0"
+  }
+}
