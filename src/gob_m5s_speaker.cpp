@@ -7,13 +7,12 @@
 */
 #include <Arduino.h>
 
-#include "gob_pcm_stream.hpp"
 #include "gob_m5s_speaker.hpp"
+#include <gob_pcm_stream.hpp>
 #include <gob_utility.hpp>
 
 #include <esp_log.h>
 #include <driver/gpio.h>
-
 #include <cstring>
 
 #if defined (ESP_IDF_VERSION_VAL)
@@ -35,6 +34,67 @@
 #define SAMPLE_RATE_TYPE int
 #endif
 
+#define SAMPLERATE_MUL 256
+
+namespace
+{
+void calcClockDiv(uint32_t* div_a, uint32_t* div_b, uint32_t* div_n, uint32_t baseClock, uint32_t targetFreq)
+{
+    if (baseClock <= targetFreq << 1)
+    { /// Nは最小2のため、基準クロックが目標クロックの2倍より小さい場合は値を確定する;
+        *div_n = 2;
+        *div_a = 1;
+        *div_b = 0;
+        return;
+    }
+    uint32_t save_n = 255;
+    uint32_t save_a = 63;
+    uint32_t save_b = 62;
+    if (targetFreq)
+    {
+        float fdiv = (float)baseClock / targetFreq;
+        uint32_t n = (uint32_t)fdiv;
+        if (n < 256)
+        {
+            fdiv -= n;
+
+            float check_base = baseClock;
+            // 探索時の誤差を少なくするため、値を大きくしておく;
+            while ((int32_t)targetFreq >= 0) { targetFreq <<= 1; check_base *= 2; }
+            float check_target = targetFreq;
+
+            uint32_t save_diff = UINT32_MAX;
+            if (n < 255)
+            { /// 初期値の設定はNがひとつ上のものを設定しておく;
+                save_a = 1;
+                save_b = 0;
+                save_n = n + 1;
+                save_diff = abs((int)(check_target - check_base / (float)save_n));
+            }
+
+            for (uint32_t a = 1; a < 64; ++a)
+            {
+                uint32_t b = roundf(a * fdiv);
+                if (a <= b) { continue; }
+                uint32_t diff = abs((int)(check_target - ((check_base * a) / (n * a + b))));
+                if (save_diff <= diff) { continue; }
+                save_diff = diff;
+                save_a = a;
+                save_b = b;
+                save_n = n;
+                if (!diff) { break; }
+            }
+        }
+    }
+    *div_n = save_n;
+    *div_a = save_a;
+    *div_b = save_b;
+}
+
+/// レート変換係数 (実際に設定されるレートが浮動小数になる場合があるため、入力と出力の両方のサンプリングレートに係数を掛け、誤差を減らす);
+
+//
+}
 
 namespace goblib
 {
@@ -111,7 +171,8 @@ static void pinMode(int_fast16_t pin, pin_mode_t mode)
 
 namespace goblib { namespace m5s {
 
-const uint8_t Speaker::_default_tone_wav[14] = { 184, 230, 255, 255, 230, 184, 128, 72, 26, 1, 1, 26, 72, 128 }; // sin wave data
+const uint8_t Speaker::_default_tone_wav[16] = { 177, 219, 246, 255, 246, 219, 177, 128, 79, 37, 10, 1, 10, 37, 79, 128 }; // sin wave data
+
 
 Speaker::Speaker(size_t max_channel)
         : _sound_channel_max(max_channel)
@@ -145,26 +206,19 @@ Speaker::~Speaker()
 
 esp_err_t Speaker::_setup_i2s(void)
 {
-    i2s_driver_uninstall(_cfg.i2s_port);
-
     if (_cfg.pin_data_out < 0) { return ESP_FAIL; }
 
-    SAMPLE_RATE_TYPE sample_rate = _cfg.sample_rate;
-
-    /*
-      ESP-IDF ver4系にて I2S_MODE_DAC_BUILT_IN を使用するとサンプリングレートが正しく反映されない不具合があったため、特殊な対策を実装している。
-      ・指定するサンプリングレートの値を1/16にする
-      ・I2S_MODE_DAC_BUILT_INを使用せずに初期化を行う
-      ・最後にI2S0のレジスタを操作してDACモードを有効にする。
-    */
-    if (_cfg.use_dac) { sample_rate >>= 4; }
+#if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
+    /// DACが使用できるのはI2Sポート0のみ。;
+    if (_cfg.use_dac && _cfg.i2s_port != I2S_NUM_0) { return ESP_FAIL; }
+#endif
 
     i2s_config_t i2s_config;
     memset(&i2s_config, 0, sizeof(i2s_config_t));
     i2s_config.mode                 = (i2s_mode_t)( I2S_MODE_MASTER | I2S_MODE_TX );
-    i2s_config.sample_rate          = sample_rate;
+    i2s_config.sample_rate          = 48000; // dummy setting
     i2s_config.bits_per_sample      = I2S_BITS_PER_SAMPLE_16BIT;
-    i2s_config.channel_format       = _cfg.stereo
+    i2s_config.channel_format       = _cfg.stereo || _cfg.buzzer
             ? I2S_CHANNEL_FMT_RIGHT_LEFT
             : I2S_CHANNEL_FMT_ONLY_RIGHT;
     i2s_config.communication_format = (i2s_comm_format_t)( COMM_FORMAT_I2S );
@@ -178,10 +232,13 @@ esp_err_t Speaker::_setup_i2s(void)
     pin_config.ws_io_num      = _cfg.pin_ws;
     pin_config.data_out_num   = _cfg.pin_data_out;
 
-    esp_err_t err = i2s_driver_install(_cfg.i2s_port, &i2s_config, 0, nullptr);
+    esp_err_t err;
+    if (ESP_OK != (err = i2s_driver_install(_cfg.i2s_port, &i2s_config, 0, nullptr)))
+    {
+        i2s_driver_uninstall(_cfg.i2s_port);
+        err = i2s_driver_install(_cfg.i2s_port, &i2s_config, 0, nullptr);
+    }
     if (err != ESP_OK) { return err; }
-
-    i2s_zero_dma_buffer(_cfg.i2s_port);
 
 #if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
     if (_cfg.use_dac)
@@ -195,7 +252,7 @@ esp_err_t Speaker::_setup_i2s(void)
         }
         err = i2s_set_dac_mode(dac_mode);
         if (_cfg.i2s_port == I2S_NUM_0)
-        { /// レジスタを操作してDACモードの設定を有効にする ;
+        { /// レジスタを操作してDACモードの設定を有効にする(I2S0のみ。I2S1はDAC,ADC非対応) ;
             I2S0.conf2.lcd_en = true;
             I2S0.conf.tx_right_first = true;
             I2S0.conf.tx_msb_shift = 0;
@@ -211,21 +268,65 @@ esp_err_t Speaker::_setup_i2s(void)
     return err;
 }
 
+
+
 void Speaker::_playing_task()
 {
-    i2s_port_t i2s_port = _cfg.i2s_port;
-
+    const i2s_port_t i2s_port = _cfg.i2s_port;
     const bool out_stereo = _cfg.stereo;
-    const int32_t spk_sample_rate = _cfg.sample_rate;
+
+    static constexpr uint32_t base = 160*1000*1000; // 160 MHz
+    uint32_t bits = (_cfg.use_dac) ? 2 : 32; /// 1サンプリング当たりの出力ビット数 (DACは2ch分の出力で2回、I2Sは16bit x2chで32回);
+    uint32_t div_a, div_b, div_n;
+    uint32_t div_m = 64 / bits; /// MCLKを使用しないので、サンプリングレート誤差が少なくなるようにdiv_mを調整する;
+    // MCLKを使用するデバイスに対応する場合には、div_mを使用してBCKとMCKの比率を調整する;
+
+    calcClockDiv(&div_a, &div_b, &div_n, base, div_m * bits * _cfg.sample_rate);
+
+    /// 実際に設定されたサンプリングレートの算出を行う;
+    const int32_t spk_sample_rate_x256 = (float)base * SAMPLERATE_MUL / ((float)(div_b * div_m * bits) / (float)div_a + (div_n * div_m * bits));
+    //  ESP_EARLY_LOGW("Speaker_Class", "sample rate:%d Hz = %d MHz/(%d+(%d/%d))/%d/%d = %d Hz", _cfg.sample_rate, base / 1000000, div_n, div_b, div_a, div_m, bits, spk_sample_rate_x256 / SAMPLERATE_MUL);
+
+#if defined ( CONFIG_IDF_TARGET_ESP32C3 )
+
+    auto dev = &I2S0;
+    dev->tx_conf1.tx_bck_div_num = div_m - 1;
+    dev->tx_clkm_conf.tx_clkm_div_num = div_n;
+    bool yn1 = (div_b > (div_a >> 1)) ? 1 : 0;
+
+    dev->tx_clkm_div_conf.val = 0;
+    if (yn1) {
+        dev->tx_clkm_div_conf.tx_clkm_div_yn1 = 1;
+        div_b = div_a - div_b;
+    }
+    if (div_b)
+    {
+        dev->tx_clkm_div_conf.tx_clkm_div_z = div_b;
+        dev->tx_clkm_div_conf.tx_clkm_div_y = div_a % div_b;
+        dev->tx_clkm_div_conf.tx_clkm_div_x = div_a / div_b - 1;
+    }
+    dev->tx_clkm_conf.tx_clk_sel = 2;   // PLL_160M_CLK
+    dev->tx_clkm_conf.clk_en = 1;
+    dev->tx_clkm_conf.tx_clk_active = 1;
+
+#else
+
+    auto dev = (i2s_port == i2s_port_t::I2S_NUM_1) ? &I2S1 : &I2S0;
+
+    dev->sample_rate_conf.tx_bck_div_num = div_m;
+    dev->clkm_conf.clkm_div_a = div_a;
+    dev->clkm_conf.clkm_div_b = div_b;
+    dev->clkm_conf.clkm_div_num = div_n;
+    dev->clkm_conf.clka_en = 0; // APLL disable : PLL_160M
+
+#endif
+
+    const float magnification = (float)_cfg.magnification / spk_sample_rate_x256
+            / (~0u >> ((_cfg.use_dac || _cfg.buzzer) ? 0 : 8));
     const size_t dma_buf_len = _cfg.dma_buf_len & ~1;
     int nodata_count = 0;
     int32_t dac_offset = _cfg.dac_zero_level << 8;
     bool flg_i2s_started = false;
-    bool in_stereo = false;
-    float ch_v = 0.0f;
-    const float magnification = (float)_cfg.magnification 
-            / (~0u >> ((_cfg.use_dac || _cfg.buzzer) ? 0 : 8));
-    const void* data = nullptr;
 
     union
     {
@@ -237,27 +338,66 @@ void Speaker::_playing_task()
     {
         float* float_buf;
         int16_t* sound_buf;
+        int32_t* sound_buf32;
     };
     float_buf = (float*)alloca(dma_buf_len * sizeof(float));
 
     for(;;)
     {
-        if (++nodata_count > _cfg.dma_buf_count * 2)
+        if (nodata_count)
         {
-            nodata_count = 0;
-            flg_i2s_started = false;
-            i2s_stop(i2s_port);
-#if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
-            if (_cfg.use_dac)
+            if (nodata_count > _cfg.dma_buf_count)
             {
-                i2s_set_dac_mode(i2s_dac_mode_t::I2S_DAC_CHANNEL_DISABLE);
-            }
+                nodata_count = 0;
+                flg_i2s_started = false;
+                i2s_stop(i2s_port);
+#if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
+                if (_cfg.use_dac)
+                {
+                    i2s_set_dac_mode(i2s_dac_mode_t::I2S_DAC_CHANNEL_DISABLE);
+                }
 #endif
-            ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
-            continue;
+                ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
+                continue;
+            }
+            ulTaskNotifyTake( pdTRUE, 0 );
         }
 
         memset(float_buf, 0, dma_buf_len * sizeof(float));
+        ++nodata_count;
+
+        if (!flg_i2s_started)
+        {
+            flg_i2s_started = true;
+#if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
+            if (_cfg.use_dac)
+            {
+                i2s_dac_mode_t dac_mode = i2s_dac_mode_t::I2S_DAC_CHANNEL_BOTH_EN;
+                if (!_cfg.stereo)
+                {
+                    dac_mode = (_cfg.pin_data_out == GPIO_NUM_25)
+                            ? i2s_dac_mode_t::I2S_DAC_CHANNEL_RIGHT_EN // for GPIO 25
+                            : i2s_dac_mode_t::I2S_DAC_CHANNEL_LEFT_EN; // for GPIO 26
+                }
+                i2s_set_dac_mode(dac_mode);
+            }
+#endif
+            i2s_zero_dma_buffer(i2s_port);
+            i2s_start(i2s_port);
+            if (_cfg.use_dac && _cfg.dac_zero_level != 0)
+            {
+                size_t idx = 0;
+                do
+                {
+                    sound_buf[idx^1] = dac_offset * idx / dma_buf_len;
+                } while (++idx < dma_buf_len);
+                size_t write_bytes;
+                i2s_write(i2s_port, sound_buf, dma_buf_len * sizeof(int16_t), &write_bytes, portMAX_DELAY);
+                memset(float_buf, 0, dma_buf_len * sizeof(float));
+            }
+        }
+
+        float volume = magnification * (_master_volume * _master_volume);
 
         for (size_t ch = 0; ch < _sound_channel_max; ++ch)
         {
@@ -266,10 +406,9 @@ void Speaker::_playing_task()
 
             auto ch_info = &(_ch_info[ch]);
             wav_info_t* current_wav = &(ch_info->wavinfo[!ch_info->flip]);
-            wav_info_t* next_wav = &(ch_info->wavinfo[ch_info->flip]);
+            wav_info_t* next_wav    = &(ch_info->wavinfo[ ch_info->flip]);
 
             size_t idx = 0;
-            int ch_diff = ch_info->diff;
 
             if (current_wav->repeat == 0 || next_wav->stop_current)
             {
@@ -287,9 +426,6 @@ void Speaker::_playing_task()
                     ch_info->index = 0;
                     if (current_wav->repeat == 0)
                     {
-                        // Has stream?
-                        if(_stream_info[ch].hasStream()) { continue; }
-
                         _play_channel_bits.fetch_and(~(1 << ch));
                         if (current_wav->repeat == 0)
                         {
@@ -300,20 +436,24 @@ void Speaker::_playing_task()
                     }
                 }
             }
-            data = current_wav->data;
-            in_stereo = current_wav->is_stereo;
+            const void* data = current_wav->data;
+            const bool in_stereo = current_wav->is_stereo;
+            const int32_t in_rate = current_wav->sample_rate_x256;
             int32_t tmp = ch_info->volume;
             tmp *= tmp;
             if (!current_wav->is_16bit) { tmp <<= 8; }
-            if (out_stereo) { tmp <<= 1; }
-            ch_v = (float)tmp / spk_sample_rate;
+            if (_cfg.stereo) { tmp <<= 1; }
+            const float ch_v = volume * tmp;
 
             bool liner_flip = ch_info->liner_flip;
             auto liner_base = ch_info->liner_buf[ liner_flip];
-            auto liner_next = ch_info->liner_buf[!liner_flip];
+            auto liner_prev = ch_info->liner_buf[!liner_flip];
+
+            int ch_diff = ch_info->diff;
+            if (ch_diff < 0) { goto label_continue_sample; }
+
             do
             {
-                if (ch_diff >= 0)
                 {
                     size_t ch_index = ch_info->index;
                     do
@@ -321,24 +461,27 @@ void Speaker::_playing_task()
                         if (ch_index >= current_wav->length)
                         {
                             ch_index -= current_wav->length;
-                            if (current_wav->repeat && current_wav->repeat != ~0u)
+                            auto repeat = current_wav->repeat;
+                            if (repeat != ~0u)
                             {
-                                if (--current_wav->repeat == 0)
+                                current_wav->repeat = --repeat;
+                                if (repeat == 0)
                                 {
                                     ch_info->index = ch_index;
-                                    ch_info->liner_flip = (liner_next < liner_base);
+                                    ch_info->liner_flip = (liner_prev < liner_base);
 
                                     goto label_next_wav;
                                 }
                             }
                         }
+
                         int32_t l, r;
                         if (current_wav->is_16bit)
                         {
                             auto wav = (const int16_t*)data;
-                            l = wav[ch_index];
-                            r = wav[ch_index += in_stereo];
-                            ++ch_index;
+                            l = wav[ch_index + in_stereo];
+                            r = wav[ch_index];
+                            ch_index += in_stereo + 1;
                             if (!current_wav->is_signed)
                             {
                                 l = (l & 0xFFFF) + INT16_MIN;
@@ -348,9 +491,9 @@ void Speaker::_playing_task()
                         else
                         {
                             auto wav = (const uint8_t*)data;
-                            l = wav[ch_index];
-                            r = wav[ch_index += in_stereo];
-                            ++ch_index;
+                            l = wav[ch_index + in_stereo];
+                            r = wav[ch_index];
+                            ch_index += in_stereo + 1;
                             if (current_wav->is_signed)
                             {
                                 l = (int8_t)l;
@@ -362,7 +505,7 @@ void Speaker::_playing_task()
                                 r += INT8_MIN;
                             }
                         }
-                        std::swap(liner_base, liner_next);
+                        std::swap(liner_base, liner_prev);
 
                         if (!out_stereo) { l += r; }
                         else
@@ -371,24 +514,32 @@ void Speaker::_playing_task()
                         }
                         liner_base[0] = l * ch_v;
 
-                        ch_diff -= spk_sample_rate;
+                        ch_diff -= spk_sample_rate_x256;
                     } while (ch_diff >= 0);
                     ch_info->index = ch_index;
                 }
 
-                const auto in_rate = current_wav->sample_rate;
+          label_continue_sample:
+
+                /// liner_prevからliner_baseへの２サンプル間の線形補間;
                 float base_l = liner_base[0];
-                float next_l = base_l - liner_next[0];
-                base_l *= spk_sample_rate;
+                float step_l = base_l - liner_prev[0];
+                base_l *= spk_sample_rate_x256;
+                base_l += step_l * ch_diff;
+                step_l *= in_rate;
                 if (out_stereo)
                 {
                     float base_r = liner_base[1];
-                    float next_r = base_r - liner_next[1];
-                    base_r *= spk_sample_rate;
+                    float step_r = base_r - liner_prev[1];
+                    base_r *= spk_sample_rate_x256;
+                    base_r += step_r * ch_diff;
+                    step_r *= in_rate;
                     do
                     {
-                        float_buf[  idx] += next_l * ch_diff + base_l;
-                        float_buf[++idx] += next_r * ch_diff + base_r;
+                        float_buf[  idx] += base_l;
+                        float_buf[++idx] += base_r;
+                        base_l += step_l;
+                        base_r += step_r;
                         ch_diff += in_rate;
                     } while (++idx < dma_buf_len && ch_diff < 0);
                 }
@@ -396,36 +547,28 @@ void Speaker::_playing_task()
                 {
                     do
                     {
-                        float_buf[idx] += next_l * ch_diff + base_l;
+                        float_buf[idx] += base_l;
+                        base_l += step_l;
                         ch_diff += in_rate;
                     } while (++idx < dma_buf_len && ch_diff < 0);
                 }
+                ch_info->diff = ch_diff;
             } while (idx < dma_buf_len);
-            ch_info->liner_flip = (liner_next < liner_base);
-            ch_info->diff = ch_diff;
+            ch_info->liner_flip = (liner_prev < liner_base);
         }
 
-        float volume = magnification * (_master_volume * _master_volume);
-        size_t idx = 0;
         if (_cfg.use_dac)
         {
+            /// DAC出力は cfg.dac_zero_levelが0に設定されている場合、振幅のオフセットを動的に変更する。;
+            /// これはESP32のDAC出力は高ければ高いほどノイズも増加するため、なるべく低いDAC出力を用いてノイズを低減することを目的とする。;
             const bool zero_bias = (_cfg.dac_zero_level == 0);
-            if (zero_bias && nodata_count)
+            if (nodata_count == 0)
             {
+                if (zero_bias) { dac_offset -= (dac_offset * dma_buf_len) >> 15; }
+                size_t idx = 0;
                 do
                 {
-                    dac_offset = (dac_offset * 255) >> 8;
-                    int32_t v = dac_offset + surplus[idx & out_stereo];
-                    surplus[idx & out_stereo] = v;
-                    sound_buf[idx ^ 1] = v;
-                } while (++idx < dma_buf_len);
-            }
-            else
-            {
-                if (zero_bias) { dac_offset -= dma_buf_len >> 5; }
-                do
-                {
-                    int32_t v = volume * float_buf[idx];
+                    int32_t v = float_buf[idx];
                     if (zero_bias)
                     {
                         int32_t vabs = abs(v);
@@ -444,41 +587,62 @@ void Speaker::_playing_task()
                     sound_buf[idx ^ 1] = v;
                 } while (++idx < dma_buf_len);
             }
+            else
+            {
+                if (nodata_count == 1)
+                {
+                    surplus16 = dac_offset;
+                }
+                uint_fast16_t offset = surplus16;
+                if (offset)
+                {
+                    nodata_count = 1;
+                    if (--offset > 16)
+                    {
+                        size_t idx = 0;
+                        do
+                        {
+                            offset = (offset * 255) >> 8;
+                            sound_buf[idx] = offset;
+                        } while (++idx < dma_buf_len);
+                        if (offset <= 16) { offset = 16; }
+                    }
+                    surplus16 = offset;
+                    if (zero_bias) { dac_offset = offset; }
+                }
+            }
         }
         else if (_cfg.buzzer)
         {
-            if (nodata_count)
+            /// ブザー出力は 1bit ΔΣ方式。 I2Sデータ出力をブザーの駆動信号として利用する;
+            /// 出力はモノラル限定だが、I2Sへはステレオ扱いで出力する。;
+            /// (I2Sをモノラル設定にした場合は同じデータが２チャンネル分送信されてしまうため、敢えてステレオ扱いとしている);
+            int32_t tmp = (uint16_t)surplus16;
+            size_t idx = 0;
+            do
             {
-                memset(sound_buf, 0, dma_buf_len << 1);
-                surplus16 = 0;
-            }
-            else
-            {
-                int32_t tmp = surplus16;
+                int32_t v = float_buf[idx];
+                v = INT16_MIN - v;
+                uint32_t bitdata = 0;
+                uint32_t bit = 0x80000000;
                 do
                 {
-                    int32_t v = volume * float_buf[idx];
-                    v += 0x8000;
-                    uint_fast16_t bitdata = 0;
-                    uint_fast16_t bit = 0x8000;
-                    do
+                    if ((tmp += v) < 0)
                     {
-                        if ((tmp += v) >= 0x8000)
-                        {
-                            tmp -= 0x10000;
-                            bitdata |= bit;
-                        }
-                    } while (bit >>= 1);
-                    sound_buf[idx ^ 1] = bitdata;
-                } while (++idx < dma_buf_len);
-                surplus16 = tmp;
-            }
+                        tmp += 0x10000;
+                        bitdata |= bit;
+                    }
+                } while (bit >>= 1);
+                sound_buf32[idx] = bitdata;
+            } while (++idx < dma_buf_len);
+            surplus16 = nodata_count ? 0x8000 : tmp;
         }
         else
         {
+            size_t idx = 0;
             do
             {
-                int32_t v = volume * float_buf[idx];
+                int32_t v = float_buf[idx];
                 v += surplus[idx & out_stereo];
                 surplus[idx & out_stereo] = v;
                 v >>= 8;
@@ -488,27 +652,8 @@ void Speaker::_playing_task()
             } while (++idx < dma_buf_len);
         }
 
-        if (!flg_i2s_started)
-        {
-            flg_i2s_started = true;
-#if !defined (CONFIG_IDF_TARGET) || defined (CONFIG_IDF_TARGET_ESP32)
-            if (_cfg.use_dac)
-            {
-                i2s_dac_mode_t dac_mode = i2s_dac_mode_t::I2S_DAC_CHANNEL_BOTH_EN;
-                if (!_cfg.stereo)
-                {
-                    dac_mode = (_cfg.pin_data_out == GPIO_NUM_25)
-                            ? i2s_dac_mode_t::I2S_DAC_CHANNEL_RIGHT_EN // for GPIO 25
-                            : i2s_dac_mode_t::I2S_DAC_CHANNEL_LEFT_EN; // for GPIO 26
-                }
-                i2s_set_dac_mode(dac_mode);
-            }
-#endif
-            i2s_start(i2s_port);
-        }
-
         size_t write_bytes;
-        i2s_write(i2s_port, sound_buf, dma_buf_len * sizeof(int16_t), &write_bytes, portMAX_DELAY);
+        i2s_write(i2s_port, sound_buf, dma_buf_len * sizeof(int16_t) << _cfg.buzzer, &write_bytes, portMAX_DELAY);
     }
 }
 
@@ -542,11 +687,13 @@ bool Speaker::begin()
     if (res)
     {
         size_t stack_size = 1024 + (_cfg.dma_buf_len * sizeof(float));
+#if portNUM_PROCESSORS > 1
         if ((size_t)_cfg.task_pinned_core < portNUM_PROCESSORS)
         {
             xTaskCreatePinnedToCore(playing_task, "playing_task", stack_size, this, _cfg.task_priority, &_task_handle, _cfg.task_pinned_core);
         }
         else
+#endif
         {
             xTaskCreate(playing_task, "playing_task", stack_size, this, _cfg.task_priority, &_task_handle);
         }
@@ -606,7 +753,7 @@ void Speaker::wav_info_t::clear(void)
 {
     length = 0;
     data = nullptr;
-    sample_rate = 0;
+    sample_rate_x256 = 0;
     flg = 0;
     repeat = 0;
 }
@@ -618,7 +765,11 @@ bool Speaker::_set_next_wav(size_t ch, const wav_info_t& wav)
     if (!wav.stop_current)
     {
         if (isPlaying(ch) > 1) { return false; }
-        while ((_play_channel_bits.load() & chmask) && (chinfo->wavinfo[chinfo->flip].repeat)) { xSemaphoreTake(_task_semaphore, 1); }
+        while ((_play_channel_bits.load() & chmask) && (chinfo->wavinfo[chinfo->flip].repeat))
+        {
+            if (chinfo->wavinfo[!chinfo->flip].repeat == ~0u) { return false; }
+            xSemaphoreTake(_task_semaphore, 1);
+        }
     }
     chinfo->wavinfo[chinfo->flip] = wav;
     _play_channel_bits.fetch_or(chmask);
@@ -627,25 +778,22 @@ bool Speaker::_set_next_wav(size_t ch, const wav_info_t& wav)
     return true;
 }
 
-bool Speaker::_play_raw(const void* data, size_t array_len, bool flg_16bit, bool flg_signed, uint32_t sample_rate, bool flg_stereo, uint32_t repeat_count, int channel, bool stop_current_sound, bool no_clear_index)   
+bool Speaker::_play_raw(const void* data, size_t array_len, bool flg_16bit, bool flg_signed, float sample_rate, bool flg_stereo, uint32_t repeat_count, int channel, bool stop_current_sound, bool no_clear_index)
 {
-    if (!begin() || (_task_handle == nullptr)) { return true; }
-    if (array_len == 0) { return true; }
+    if (!begin() || (_task_handle == nullptr)) { return false; }
+    if (array_len == 0 || data == nullptr) { return false; }
     size_t ch = (size_t)channel;
     if (ch >= _sound_channel_max)
     {
-        size_t bits = _play_channel_bits.load();
-        for (ch = _sound_channel_max - 1; ch < _sound_channel_max; --ch)
-        {
-            if (0 == ((bits >> ch) & 1)) { break; }
-        }
-        if (ch >= _sound_channel_max) { return false; }
+        channel = getFreeChannel();
+        if(channel < 0) { return false; }
+        ch = (size_t)channel;
     }
     wav_info_t info;
     info.data = data;
     info.length = array_len;
     info.repeat = repeat_count ? repeat_count : ~0u;
-    info.sample_rate = sample_rate;
+    info.sample_rate_x256 = sample_rate * SAMPLERATE_MUL;
     info.is_stereo = flg_stereo;
     info.is_16bit = flg_16bit;
     info.is_signed = flg_signed;
@@ -655,122 +803,186 @@ bool Speaker::_play_raw(const void* data, size_t array_len, bool flg_16bit, bool
     return _set_next_wav(ch, info);
 }
 
-bool Speaker::play(goblib::PcmStream& stream,uint32_t repeat, int channel)
+bool Speaker::playWav(const uint8_t* wav_data, size_t data_len, uint32_t repeat, int channel, bool stop_current_sound)
+{
+    struct __attribute__((packed)) wav_header_t
+    {
+      char RIFF[4];
+      uint32_t chunk_size;
+      char WAVEfmt[8];
+      uint32_t fmt_chunk_size;
+      uint16_t audiofmt;
+      uint16_t channel;
+      uint32_t sample_rate;
+      uint32_t byte_per_sec;
+      uint16_t block_size;
+      uint16_t bit_per_sample;
+    };
+    struct __attribute__((packed)) sub_chunk_t
+    {
+      char identifier[4];
+      uint32_t chunk_size;
+      uint8_t data[1];
+    };
+
+    auto wav = (wav_header_t*)wav_data;
+    /*
+    ESP_LOGD("wav", "RIFF           : %.4s" , wav->RIFF          );
+    ESP_LOGD("wav", "chunk_size     : %d"   , wav->chunk_size    );
+    ESP_LOGD("wav", "WAVEfmt        : %.8s" , wav->WAVEfmt       );
+    ESP_LOGD("wav", "fmt_chunk_size : %d"   , wav->fmt_chunk_size);
+    ESP_LOGD("wav", "audiofmt       : %d"   , wav->audiofmt      );
+    ESP_LOGD("wav", "channel        : %d"   , wav->channel       );
+    ESP_LOGD("wav", "sample_rate    : %d"   , wav->sample_rate   );
+    ESP_LOGD("wav", "byte_per_sec   : %d"   , wav->byte_per_sec  );
+    ESP_LOGD("wav", "block_size     : %d"   , wav->block_size    );
+    ESP_LOGD("wav", "bit_per_sample : %d"   , wav->bit_per_sample);
+    */
+    if (!wav_data
+     || memcmp(wav->RIFF,       "RIFF",     4)
+     || memcmp(wav->WAVEfmt,    "WAVEfmt ", 8)
+     || wav->audiofmt != 1
+     || wav->bit_per_sample < 8
+     || wav->bit_per_sample > 16
+     || wav->channel == 0
+     || wav->channel > 2
+     )
+    {
+      return false;
+    }
+
+    sub_chunk_t* sub = (sub_chunk_t*)(wav_data + offsetof(wav_header_t, audiofmt) + wav->fmt_chunk_size);
+    /*
+    ESP_LOGD("wav", "sub id         : %.4s" , sub->identifier);
+    ESP_LOGD("wav", "sub chunk_size : %d"   , sub->chunk_size);
+    */
+    while(memcmp(sub->identifier, "data", 4) && (uint8_t*)sub < wav_data + wav->chunk_size + 8)
+    {
+      sub = (sub_chunk_t*)((uint8_t*)sub + offsetof(sub_chunk_t, data) + sub->chunk_size);
+      /*
+      ESP_LOGD("wav", "sub id         : %.4s" , sub->identifier);
+      ESP_LOGD("wav", "sub chunk_size : %d"   , sub->chunk_size);
+      */
+    }
+    if (memcmp(sub->identifier, "data",     4))
+    {
+      return false;
+    }
+
+    data_len = data_len > sizeof(wav_header_t) ? data_len - sizeof(wav_header_t) : 0;
+    if (data_len > sub->chunk_size) { data_len = sub->chunk_size; }
+    bool flg_16bit = (wav->bit_per_sample >> 4);
+    return _play_raw( sub->data
+                    , data_len >> flg_16bit
+                    , flg_16bit
+                    , flg_16bit
+                    , wav->sample_rate
+                    , wav->channel > 1
+                    , repeat
+                    , channel
+                    , stop_current_sound
+                    , false
+                    );
+}
+
+bool Speaker::play(goblib::PcmStream& stream, uint32_t repeat, int channel)
 {
     if (!stream.valid() || !begin() || (_task_handle == nullptr)) { return false; }
-
     size_t ch = (size_t)channel;
     if (ch >= _sound_channel_max)
     {
-        size_t bits = _play_channel_bits.load();
-        for (ch = _sound_channel_max - 1; ch < _sound_channel_max; --ch)
-        {
-            if (0 == ((bits >> ch) & 1)) { break; }
-        }
-        if (ch >= _sound_channel_max) { return true; }
+        channel = getFreeChannel();
+        if(channel < 0) { return false; }
+        ch = (size_t)channel;
     }
 
     auto& sinfo = _stream_info[ch];
+    if(sinfo.hasStream())
+    {
+        stop(ch);
+    }
     sinfo.stream = &stream;
     sinfo.repeat = repeat ? repeat : ~0u;
-    sinfo.bindex = true; // next
+    sinfo.bindex = 0;
+    sinfo.position = 0;
     
     stream.rewind();
-    auto len = stream.read(sinfo.buf[0], sizeof(sinfo.buf[0]));
-    sinfo.position = len;
+    auto readLen = std::min(stream.dataSize(), BUF_LEN);
+    auto len = stream.read(sinfo.buf[0], readLen);
 
-    bool f16 = stream.bitsPerSample() >> 4;
-    wav_info_t info;
-    info.data = sinfo.buf[0];
-    info.length = len >> f16;
-    info.repeat = 1;
-    info.sample_rate = stream.sampleRate();
-    info.is_stereo = stream.channels() >= 2;
-    info.is_16bit = f16;
-    info.is_signed = f16;
-    info.stop_current = false;
-    info.no_clear_index = true;
-
-    if(!_set_next_wav(ch, info))
+    auto ret = playRaw(sinfo.buf[0], len, stream.sampleRate(), false, 1, ch);
+    if(ret)
     {
-        stream.rewind();
-        sinfo.clear();
-        return false;
+        sinfo.position += len;
+        ++sinfo.bindex;
+        if(_callbackStreaming) { _callbackStreaming(_cbsArg, ch, true); }
     }
-
-    if(_callbackStreaming) { _callbackStreaming(_cbsArg, ch, true); }
-    return true;
+    return ret;
 }
 
 void Speaker::pump()
 {
-    if(!isRunning() || !isPlaying()) { return; }
+    if(!isRunning()) { return; }
 
     for(int ch = 0; ch < _sound_channel_max; ++ch)
     {
-        if((_play_channel_bits.load() & (1 << ch)) == 0) { continue; }
-
-        channel_info_t* ch_info;
-        ch_info = &_ch_info[ch];
-        wav_info_t* next_wav = &(ch_info->wavinfo[ch_info->flip]);
-        if(next_wav->data) { continue; }
+        if(isPlaying(ch) > 1 || !_stream_info[ch].hasStream()) { continue; } // wave_info_t full or no stream.
 
         auto& sinfo = _stream_info[ch];
         auto s = sinfo.stream;
+        auto buf = sinfo.buf[ sinfo.bindex ];
+        auto seekPos = sinfo.position;
 
-        if(!s) { continue; }
-
-        auto old_pos = s->position();
-
-        s->seek(sinfo.position);
-        auto len = s->read(sinfo.buf[ sinfo.bindex ], sizeof(sinfo.buf[0]));
+        if(!s->seek(seekPos)) {  continue; }
+        auto readLen = std::min(s->dataSize() - seekPos, BUF_LEN);
+        auto len = s->read(buf, readLen);
         sinfo.position += len;
 
+        // End of wav data?
         if(s->is_tail())
         {
+            // Repeat?
             if(sinfo.repeat == ~0u || --sinfo.repeat)
             {
                 s->rewind();
                 sinfo.position = 0;
-                if(len < _cfg.dma_buf_len)
+                if(len < BUF_LEN)
                 {
-                    sinfo.position = s->read(sinfo.buf[ sinfo.bindex ] + len, _cfg.dma_buf_len - len);
+                    sinfo.position = s->read(buf + len, BUF_LEN - len);
                     len += sinfo.position;
                 }
             }
+            // End of streaming.
             else
             {
-                // End of streaming
                 if(_callbackStreaming) { _callbackStreaming(_cbsArg, ch, false); }
                 sinfo.clear();
             }
         }
+        if(len == 0) { continue; }
 
-        if(len > 0)
+        auto pr = playRaw(buf, len, s->sampleRate(), false, 1, ch);
+        if(pr)
         {
-            bool f16 = s->bitsPerSample() >> 4;
-            wav_info_t info;
-            info.data = sinfo.buf[sinfo.bindex];
-            info.length = len >> f16;
-            info.repeat = 1;
-            info.sample_rate = s->sampleRate();
-            info.is_stereo = s->channels() >= 2;
-            info.is_16bit = f16;
-            info.is_signed = f16;
-            info.stop_current = false;
-            info.no_clear_index = true;
-
-            if(_set_next_wav(ch, info))
-            {
-                sinfo.bindex = !sinfo.bindex;
-            }
-            else
-            {
-                s->seek(old_pos);
-                sinfo.position = old_pos;
-            }
+            sinfo.bindex = (sinfo.bindex + 1) % stream_info_t::NUMBER_OF_BUF;
+        }
+        else
+        {
+            // Need read from seekPos at next time.
+            sinfo.position = seekPos;
         }
     }
+}
+
+int Speaker::getFreeChannel() const
+{
+    size_t bits = _play_channel_bits.load();
+    size_t ch;
+    for (ch = _sound_channel_max - 1; ch < _sound_channel_max; --ch)
+    {
+        if (0 == ((bits >> ch) & 1) && !_stream_info[ch].hasStream()) { break ; }
+    }
+    return (ch >= _sound_channel_max) ? -1 : ch;
 }
 
 //

@@ -32,7 +32,7 @@ class Speaker
   protected:
     constexpr static std::size_t BUF_LEN = 384; //
 
-    static const uint8_t _default_tone_wav[14];
+    static const uint8_t _default_tone_wav[16];
     
     /*! @brief Same as M5Unified m5::speaker_config_t */
     struct speaker_config_t
@@ -57,8 +57,6 @@ class Speaker
             // goblib default settings, CPU0, priority0, buffer length BUF_LEN
             pin_data_out = 25;
             use_dac = true;
-            stereo = false;
-            magnification = 8;
             dma_buf_len = BUF_LEN;
             task_priority = 1;
             task_pinned_core = 0;
@@ -69,7 +67,7 @@ class Speaker
     struct wav_info_t
     {
         volatile uint32_t repeat = 0;   /// -1 mean infinity repeat
-        uint32_t sample_rate = 0;
+        uint32_t sample_rate_x256 = 0;
         const void* data = nullptr;
         size_t length = 0;
         union
@@ -131,18 +129,25 @@ class Speaker
 
     bool tone(float frequency, uint32_t duration, int channel, bool stop_current_sound, const uint8_t* raw_data, size_t array_len, bool stereo = false)
     {
-        return _play_raw(raw_data, array_len, false, false, (int)(frequency * array_len) >> stereo, stereo, (duration != ~0u) ? (duration * frequency / 1000) : ~0u, channel, stop_current_sound, true);
+      return _play_raw(raw_data, array_len, false, false, frequency * (array_len >> stereo), stereo, (duration != ~0u) ? (duration * frequency / 1000) : ~0u, channel, stop_current_sound, true);
     }
-
     bool tone(float frequency, uint32_t duration = ~0u, int channel = -1, bool stop_current_sound = true) { return tone(frequency, duration, channel, stop_current_sound, _default_tone_wav, sizeof(_default_tone_wav), false); }
-    bool playRAW(const int8_t* raw_data, size_t array_len, uint32_t sample_rate = 44100, bool stereo = false, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false)
+
+    bool playRaw(const int8_t* raw_data, size_t array_len, uint32_t sample_rate = 44100, bool stereo = false, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false)
     {
-        return _play_raw(static_cast<const void* >(raw_data), array_len, false, true, sample_rate, stereo, repeat, channel, stop_current_sound, false);
+      return _play_raw(static_cast<const void* >(raw_data), array_len, false, true, sample_rate, stereo, repeat, channel, stop_current_sound, false);
     }
-    bool playRAW(const uint8_t* raw_data, size_t array_len, uint32_t sample_rate = 44100, bool stereo = false, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false)
+    bool playRaw(const uint8_t* raw_data, size_t array_len, uint32_t sample_rate = 44100, bool stereo = false, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false)
     {
         return _play_raw(static_cast<const void* >(raw_data), array_len, false, false, sample_rate, stereo, repeat, channel, stop_current_sound, false);
     }
+    bool playRaw(const int16_t* raw_data, size_t array_len, uint32_t sample_rate = 44100, bool stereo = false, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false)
+    {
+      return _play_raw(static_cast<const void* >(raw_data), array_len, true, true, sample_rate, stereo, repeat, channel, stop_current_sound, false);
+    }
+
+    bool playWav(const uint8_t* wav_data, size_t data_len = ~0u, uint32_t repeat = 1, int channel = -1, bool stop_current_sound = false);
+
     /// @}
 
     //
@@ -152,18 +157,22 @@ class Speaker
 
   protected:
     esp_err_t _setup_i2s(void);
-    bool _play_raw(const void* wav, size_t array_len, bool flg_16bit, bool flg_signed, uint32_t sample_rate, bool flg_stereo, uint32_t repeat_count, int channel, bool stop_current_sound, bool no_clear_index);
+    bool _play_raw(const void* wav, size_t array_len, bool flg_16bit, bool flg_signed, float sample_rate, bool flg_stereo, uint32_t repeat_count, int channel, bool stop_current_sound, bool no_clear_index);
+
     bool _set_next_wav(size_t ch, const wav_info_t& wav);
     void setCallback(void* args, bool(*func)(void*, bool)) { _cb_set_enabled = func; _cb_set_enabled_args = args; }
     
     /*! @brief stream inforamtion for streaming */
     struct stream_info_t
     {
+        constexpr static std::size_t NUMBER_OF_BUF = 2;
         goblib::PcmStream* stream;
         std::size_t position; // read position (Same source may be played on multiple channels)
         uint32_t repeat; // argument forward play
-        std::uint8_t buf[2][BUF_LEN]; // read buffer
-        bool bindex; // read target
+        std::uint8_t buf[NUMBER_OF_BUF][BUF_LEN]; // read buffer
+        std::uint8_t bindex; // read target
+
+        stream_info_t() : stream(nullptr), position(0), repeat(0), buf{}, bindex(0) {}
         void clear() { stream = nullptr; position = 0; repeat = 0; bindex = false; }
         bool hasStream() const volatile{ return stream != nullptr; }
     };
@@ -176,6 +185,7 @@ class Speaker
 
     static void playing_task(void* arg) { static_cast<Speaker*>(arg)->_playing_task(); }
     void _playing_task();
+    int getFreeChannel() const;
     
   private:
     const size_t _sound_channel_max;
