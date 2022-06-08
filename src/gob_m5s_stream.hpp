@@ -27,8 +27,8 @@ class FileStream : public Stream
 
     static_assert( sizeof(std::size_t) <= sizeof(pos_type), "pos_type is not enough to represent position");
 
-    FileStream(const char* path = nullptr) { open(path); }
-    virtual ~FileStream() { close(); }
+    FileStream() : Stream() {}
+    virtual ~FileStream() { _file.close(); }
 
     /// @name Open, Close
     /// @{
