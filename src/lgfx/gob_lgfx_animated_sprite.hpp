@@ -10,6 +10,7 @@
 #define GOBLIB_M5S_ANIMATED_SPRITE_HPP
 
 #include <gob_macro.hpp>
+#include <gob_animation.hpp>
 #include "gob_lgfx.hpp"
 #include <vector>
 
