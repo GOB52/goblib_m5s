@@ -51,6 +51,10 @@ using GSprite = ::lgfx::v1::LGFX_Sprite;
 using GSprite = ::lgfx::v0::LGFX_Sprite;
 #endif
 
+/*! Create sprite from resource at SD card.
+ */
+bool createSprite(GSprite& s, const char* path);
+
 /// @}
 }}
 #endif

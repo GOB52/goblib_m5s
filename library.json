@@ -11,7 +11,7 @@
     "type": "git",
     "url": "https://github.com/GOB52/goblib_m5s.git"
   },
-  "version": "0.1.2",
+  "version": "0.2.0",
   "build": {
     "libArchive": false
   },
@@ -25,6 +25,6 @@
   "dependencies": {
     "lovyan03/LovyanGFX": "^0.4.15",
     "greiman/SdFat": "^2.1.2",
-    "goblib": "^0.1.0"
+    "goblib": "https://github.com/GOB52/goblib"
   }
 }

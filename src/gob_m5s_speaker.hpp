@@ -169,8 +169,8 @@ class Speaker
         goblib::PcmStream* stream;
         std::size_t position; // read position (Same source may be played on multiple channels)
         uint32_t repeat; // argument forward play
-        std::uint8_t buf[NUMBER_OF_BUF][BUF_LEN]; // read buffer
-        std::uint8_t bindex; // read target
+        uint8_t buf[NUMBER_OF_BUF][BUF_LEN]; // read buffer
+        uint8_t bindex; // read target
 
         stream_info_t() : stream(nullptr), position(0), repeat(0), buf{}, bindex(0) {}
         void clear() { stream = nullptr; position = 0; repeat = 0; bindex = false; }
