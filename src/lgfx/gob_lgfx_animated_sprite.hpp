@@ -33,7 +33,7 @@ class CellSprite : public GSprite
     }
     GOBLIB_INLINE void pushCell(GLovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y)
     {
-        push_cell(dst, r, x, y);;
+        push_cell(dst, r, x, y);
     }
     
   protected:

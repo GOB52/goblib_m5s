@@ -27,21 +27,23 @@ namespace this_thread
 */
 template <class Rep, class Period> void sleep_for(const std::chrono::duration<Rep, Period>& sleep_duration)
 {
-#if 1
     using tclock = goblib::m5s::esp_clock;
+#if 1
     auto from = tclock::now();
     auto us = std::chrono::duration_cast<tclock::duration>(sleep_duration); // to us
-
     if(us.count() > 0)
     {
         delay(us.count() / 1000); // ms
     }
     while(tclock::now() - from < us) { taskYIELD(); } // fraction (us)
 #else
-    auto s = std::chrono::steady_clock::now();
-    while(std::chrono::steady_clock::now() - s < sleep_duration)
+    auto abs_time = tclock::now() + sleep_duration;
+    auto us = std::chrono::duration_cast<std::chrono::microseconds>(abs_time - tclock::now()).count();
+    if(us > 0)
     {
-        taskYIELD();
+        auto ms = us > 0 ? us / 1000 : 0;
+        delay(ms);
+        while(tclock::now() < abs_time){ taskYIELD(); }
     }
 #endif
 }
