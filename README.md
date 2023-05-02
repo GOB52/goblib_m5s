@@ -8,9 +8,9 @@ It is intended for use in environments where C++11 or later can be compiled.
 ## Require
 [M5Stack](https://github.com/m5stack/M5Stack) 0.4.3 or later  
 [LovyanGFX](https://github.com/lovyan03/LovyanGFX) 1.1.6  
-[M5GFX](https://github.com/m5stack/M5GFX)
+[M5GFX](https://github.com/m5stack/M5GFX) 0.1.6 or later  
 [SdFat](https://github.com/greiman/SdFat) 2.2.2 or later  
-[goblib](https://github.com/GOB52/goblib) 0.2.0 or later
+[goblib](https://github.com/GOB52/goblib) 0.2.0 or later  
 
 **LovyanGFX and M5GFX are exclusive. Use either one.**
 
