@@ -5,8 +5,9 @@
   @brief  Palette animation helper for LGFX_Sprite.
   @note Depends on LovyanGFX
 */
-#include <LovyanGFX.hpp>
+#include "gob_lgfx.hpp"
 #include "gob_lgfx_animated_palette.hpp"
+#include <lgfx/v1/LGFX_Sprite.hpp>
 
 namespace goblib { namespace lgfx {
 
@@ -27,7 +28,7 @@ std::size_t AnimatedPalette::pump()
     return processed;
 }
 
-void AnimatedPalette::to(goblib::lgfx::GSprite& dst)
+void AnimatedPalette::to(LGFX_Sprite& dst)
 {
     to(dst.getPalette(), dst.getPaletteCount());
 }
@@ -40,7 +41,7 @@ void AnimatedPalette::to(RGBColor* dest, std::size_t sz)
 }
 
 
-void AnimatedPalette::from(goblib::lgfx::GSprite& src)
+void AnimatedPalette::from(LGFX_Sprite& src)
 {
     from(src.getPalette(), src.getPaletteCount());
 }

@@ -5,7 +5,6 @@
   @brief  Palette animation helper for LGFX_Sprite.
   @note Depends on LovyanGFX
 */
-#pragma once
 #ifndef GOBLIB_ANIMATED_PALETTE_HPP
 #define GOBLIB_ANIMATED_PALETTE_HPP
 
@@ -31,7 +30,7 @@ class AnimatedPalette
       @param sz size of palette colors.(4bit sprite = 16, 8bit = 256)
       @param attach Attach sprite
     */
-    explicit AnimatedPalette(std::size_t sz, goblib::lgfx::GSprite* attach = nullptr)
+    explicit AnimatedPalette(std::size_t sz, LGFX_Sprite* attach = nullptr)
             : _current(sz)
             , _save(sz)
             , _sequences()
@@ -43,7 +42,7 @@ class AnimatedPalette
     }
     ~AnimatedPalette(){}
 
-    GOBLIB_INLINE goblib::lgfx::GSprite* sprite() const { return _sprite; }
+    GOBLIB_INLINE LGFX_Sprite* sprite() const { return _sprite; }
     GOBLIB_INLINE bool isPause() const { return _pause; }
     GOBLIB_INLINE void pause(bool b) { _pause = b; }
     GOBLIB_INLINE void pause() { pause(true); }
@@ -133,11 +132,11 @@ class AnimatedPalette
     /// @name Palette I/O
     /// @{
     /*! Set current color to sprite */
-    void to(goblib::lgfx::GSprite& dst);
+    void to(LGFX_Sprite& dst);
     /*! Set current color to dest */
     void to(RGBColor* dest, std::size_t sz);
     /*! Get palette colors from sprite to current,save */
-    void from(goblib::lgfx::GSprite& src);
+    void from(LGFX_Sprite& src);
     /*! Get palette colors from src to current,save */
     void from(RGBColor* src, std::size_t sz);
     /*! Get palette colors from attached sprite to current,save */
@@ -196,7 +195,7 @@ class AnimatedPalette
     std::vector<RGBColor> _current; // current color
     std::vector<RGBColor> _save;    // saved color
     std::vector<Sequence> _sequences;   // animated sequences
-    goblib::lgfx::GSprite* _sprite;     // attached sprite.
+    LGFX_Sprite* _sprite;     // attached sprite.
     bool _pause;
 };
 

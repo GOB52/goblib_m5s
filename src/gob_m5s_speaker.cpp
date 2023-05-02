@@ -907,7 +907,7 @@ bool Speaker::play(goblib::PcmStream& stream, uint32_t repeat, int channel)
     sinfo.position = 0;
     
     stream.rewind();
-    auto readLen = std::min(stream.dataSize(), BUF_LEN);
+    auto readLen = std::min<uint32_t>(stream.dataSize(), BUF_LEN);
     auto len = stream.read(sinfo.buf[0], readLen);
 
     auto ret = playRaw(sinfo.buf[0], len, stream.sampleRate(), false, 1, ch);
@@ -934,7 +934,7 @@ void Speaker::pump()
         auto seekPos = sinfo.position;
 
         if(!s->seek(seekPos)) {  continue; }
-        auto readLen = std::min(s->dataSize() - seekPos, BUF_LEN);
+        auto readLen = std::min<uint32_t>(s->dataSize() - seekPos, BUF_LEN);
         auto len = s->read(buf, readLen);
         sinfo.position += len;
 
