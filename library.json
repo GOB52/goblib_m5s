@@ -11,7 +11,7 @@
     "type": "git",
     "url": "https://github.com/GOB52/goblib_m5s.git"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "build": {
     "libArchive": false
   },
@@ -23,8 +23,7 @@
     "arduino"
   ],
   "dependencies": {
-    "lovyan03/LovyanGFX": "^0.4.15",
-    "greiman/SdFat": "^2.1.2",
-    "goblib": "https://github.com/GOB52/goblib"
+    "greiman/SdFat": "*",
+    "goblib": "https://github.com/GOB52/goblib @ ^0.2.0"
   }
 }

@@ -3,15 +3,14 @@
 
   @file  gob_lgfx.cpp
   @brief Definition for using LovyanGFX.
-  @note Depends on LovyanGFX
+  @note Depends on LovyanGFX or M5GFX
 */
-#include <LovyanGFX.hpp>
 #include "gob_lgfx.hpp"
 #include "../gob_m5s_sd.hpp"
 
 namespace goblib { namespace lgfx {
 
-bool createSprite(GSprite& s, const char* path)
+bool createSprite(LGFX_Sprite& s, const char* path)
 {
     goblib::m5s::File file;
     file.open(path, O_READ);

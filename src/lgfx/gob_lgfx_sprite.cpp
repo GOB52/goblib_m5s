@@ -13,11 +13,7 @@ namespace goblib { namespace lgfx {
 
 /*! Fast copy for 4bit sprite to 16bit sprite without transparency.
 */
-#if defined(LGFX_USE_V1)
-std::uint32_t GSprite4::fp_copy_4to16(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
-#else
-std::int32_t GSprite4::fp_copy_4to16(void* __restrict__ dst, std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
-#endif
+std::uint32_t LGFX_Sprite4::fp_copy_4to16(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
 {
     auto s = static_cast<const std::uint8_t*>(param->src_data) +
             (((param->src_x + param->src_y * param->src_bitwidth) * param->src_bits) >> 3);
@@ -35,11 +31,7 @@ std::int32_t GSprite4::fp_copy_4to16(void* __restrict__ dst, std::int32_t index,
 }
 
 /*! Fast copy for 4bit sprite to 16bit sprite with transparency. */
-#if defined(LGFX_USE_V1)
-std::uint32_t GSprite4::fp_copy_4to16_transp(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
-#else
-std::int32_t GSprite4::fp_copy_4to16_transp(void* __restrict__ dst, std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
-#endif
+std::uint32_t LGFX_Sprite4::fp_copy_4to16_transp(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param)
 {
 #if 0
     auto s = static_cast<const std::uint8_t*>(param->src_data);
@@ -79,11 +71,7 @@ std::int32_t GSprite4::fp_copy_4to16_transp(void* __restrict__ dst, std::int32_t
 }
 
 /*! Skip transparency. */
-#if defined(LGFX_USE_V1)
-std::uint32_t GSprite4::fp_skip_transp(std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* param)
-#else
-std::int32_t GSprite4::fp_skip_transp(std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* param)
-#endif
+std::uint32_t LGFX_Sprite4::fp_skip_transp(std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* param)
 {
     auto s = static_cast<const std::uint8_t*>(param->src_data);
     std::uint32_t shift = (param->src_x & 1) ? 0 : 4;
@@ -96,6 +84,5 @@ std::int32_t GSprite4::fp_skip_transp(std::int32_t index, std::int32_t last, ::l
     } while (++index != last);
     return index;
 }
-
 //
 }}

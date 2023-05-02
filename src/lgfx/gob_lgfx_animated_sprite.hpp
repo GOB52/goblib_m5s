@@ -5,13 +5,12 @@
   @brief For cell animation
   @note Depends on LovyanGFX
 */
-#pragma once
 #ifndef GOBLIB_M5S_ANIMATED_SPRITE_HPP
 #define GOBLIB_M5S_ANIMATED_SPRITE_HPP
 
+#include "gob_lgfx.hpp"
 #include <gob_macro.hpp>
 #include <gob_animation.hpp>
-#include "gob_lgfx.hpp"
 #include <vector>
 
 namespace goblib { namespace lgfx {
@@ -20,18 +19,18 @@ namespace goblib { namespace lgfx {
   @class CellSprite
   @brief Draw any area of the sprite.
 */
-class CellSprite : public GSprite
+class CellSprite : public LGFX_Sprite
 {
   public:
-    explicit CellSprite(GLovyanGFX* parent = nullptr) : GSprite(parent) {}
+    explicit CellSprite(LovyanGFX* parent = nullptr) : LGFX_Sprite(parent) {}
     virtual ~CellSprite() {}
 
     template<typename T> GOBLIB_INLINE
-    void pushCell(GLovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y, const T& transp)
+    void pushCell(LovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y, const T& transp)
     {
         push_cell(dst, r, x, y, _write_conv.convert(transp) & _write_conv.colormask);
     }
-    GOBLIB_INLINE void pushCell(GLovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y)
+    GOBLIB_INLINE void pushCell(LovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y)
     {
         push_cell(dst, r, x, y);
     }
@@ -44,7 +43,7 @@ class CellSprite : public GSprite
       @param flipV Flip vertically?
       @note useing pushImageRotateZoom
     */
-    void push_cell(GLovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, bool flipH, bool flipV, std::uint32_t transp = ~0)
+    void push_cell(LovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, bool flipH, bool flipV, std::uint32_t transp = ~0)
     {
         std::int32_t cx,cy,cw,ch;
         dst->getClipRect(&cx,&cy,&cw,&ch);
@@ -66,18 +65,14 @@ class CellSprite : public GSprite
       @param srect Area in the sprite to push.
       @note using pushImage
     */
-    void push_cell(GLovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
+    void push_cell(LovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
     {
         std::int32_t cx,cy,cw,ch;
         dst->getClipRect(&cx,&cy,&cw,&ch);
         dst->setClipRect(x, y, srect.width(), srect.height());
         // No flip.
         ::lgfx::pixelcopy_t p(_img, dst->getColorDepth(), getColorDepth(), dst->hasPalette(), _palette, transp);
-#ifdef LGFX_USE_V1
         dst->pushImage(x - srect.left(), y - srect.top(), width(), height(), &p, _panel_sprite.getSpriteBuffer()->use_dma());
-#else
-        dst->pushImage(x - srect.left(), y - srect.top(), width(), height(), &p, _img.use_dma());
-#endif
         dst->setClipRect(cx, cy, cw, ch);
     }
 };
@@ -89,7 +84,7 @@ class CellSprite : public GSprite
 class AnimatedSprite : public CellSprite
 {
   public:
-    explicit AnimatedSprite(GLovyanGFX* parent = nullptr)
+    explicit AnimatedSprite(LovyanGFX* parent = nullptr)
             : CellSprite(parent)
             , _slice_width(0)
             , _slice_height(0)
@@ -147,7 +142,7 @@ class AnimatedSprite : public CellSprite
       @param transp transparent color.      
     */
     template<typename T> GOBLIB_INLINE
-    void pushCell(GLovyanGFX* dst, std::uint8_t c, std::int32_t x, std::int32_t y, const T& transp)
+    void pushCell(LovyanGFX* dst, std::uint8_t c, std::int32_t x, std::int32_t y, const T& transp)
     {
         push_cell(dst, _cells[c], x, y, _flipH, _flipV, _write_conv.convert(transp) & _write_conv.colormask);
     }
@@ -156,7 +151,7 @@ class AnimatedSprite : public CellSprite
     {
         push_cell(_parent, _cells[c], x, y, _flipH, _flipV);
     }
-    GOBLIB_INLINE void pushCell(GLovyanGFX* dst, std::uint8_t c, std::int32_t x, std::int32_t y)
+    GOBLIB_INLINE void pushCell(LovyanGFX* dst, std::uint8_t c, std::int32_t x, std::int32_t y)
     {
         push_cell(dst, _cells[c], x, y, _flipH, _flipV);
     }
@@ -167,7 +162,7 @@ class AnimatedSprite : public CellSprite
         push_cell(_parent, _cells[_sequencer->cell()], x, y, _flipH ^ _sequencer->isFlipH(), _flipV ^ _sequencer->isFlipV(), _write_conv.convert(transp) & _write_conv.colormask);
     }
     template<typename T> GOBLIB_INLINE
-    void pushCell(GLovyanGFX* dst, std::int32_t x, std::int32_t y, const T& transp)
+    void pushCell(LovyanGFX* dst, std::int32_t x, std::int32_t y, const T& transp)
     {
         push_cell(dst, _cells[_sequencer->cell()], x, y, _flipH ^ _sequencer->isFlipH(), _flipV ^ _sequencer->isFlipV(), _write_conv.convert(transp) & _write_conv.colormask);
     }
@@ -176,7 +171,7 @@ class AnimatedSprite : public CellSprite
     {
         push_cell(_parent, _cells[_sequencer->cell()], x, y, _flipH ^ _sequencer->isFlipH(), _flipV ^ _sequencer->isFlipV());
     }
-    GOBLIB_INLINE void pushCell(GLovyanGFX* dst, std::int32_t x, std::int32_t y)
+    GOBLIB_INLINE void pushCell(LovyanGFX* dst, std::int32_t x, std::int32_t y)
     {
         push_cell(dst, _cells[_sequencer->cell()], x, y, _flipH ^ _sequencer->isFlipH(), _flipV ^ _sequencer->isFlipV());
     }

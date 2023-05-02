@@ -6,46 +6,41 @@
   Fast copy for from 4bit sprite to 16bit sprite.
   @note Depends on LovyanGFX
 */
-#pragma once
 #ifndef GOBLIB_M5S_LGFX_SPRITE_HPP
 #define GOBLIB_M5S_LGFX_SPRITE_HPP
 
-#if defined(LGFX_USE_V1)
-#include <lgfx/v1/LGFX_Sprite.hpp>
-#else
-#include <lgfx/v0/LGFX_Sprite.hpp>
-#endif
 #include "gob_lgfx.hpp"
 #include "gob_macro.hpp"
+#include <lgfx/v1/LGFX_Sprite.hpp>
 
 namespace goblib { namespace lgfx {
 
 /*!
   @brief Spcialized 4bit sprite.
 */
-class GSprite4 : public GSprite
+class LGFX_Sprite4 : public LGFX_Sprite
 {
   public:
-    explicit GSprite4(GLovyanGFX* parent = nullptr)
-            : GSprite(parent)
+    explicit LGFX_Sprite4(LovyanGFX* parent = nullptr)
+            : LGFX_Sprite(parent)
             , _table16{}
             , _table256{}
     { setColorDepth(4); }
-    GSprite4(std::int32_t w, std::int32_t h)
+    LGFX_Sprite4(std::int32_t w, std::int32_t h)
     {
         setColorDepth(4);
         createSprite(w, h);
     }
-    virtual ~GSprite4() {}
+    virtual ~LGFX_Sprite4() {}
 
     // 4to16 (without transparency)
-    GOBLIB_INLINE void pushSpriteTo16(GLovyanGFX* dst, std::int32_t x, std::int32_t y)
+    GOBLIB_INLINE void pushSpriteTo16(LovyanGFX* dst, std::int32_t x, std::int32_t y)
     {
         push_sprite_to16(dst, x, y);
     }
 
     template<typename T> GOBLIB_INLINE
-    void pushSpriteTo16(GLovyanGFX* dst, std::int32_t x, std::int32_t y, const T& transp)
+    void pushSpriteTo16(LovyanGFX* dst, std::int32_t x, std::int32_t y, const T& transp)
     {
         push_sprite_to16(dst, x, y, _write_conv.convert(transp) & _write_conv.colormask);
     }
@@ -68,11 +63,7 @@ class GSprite4 : public GSprite
   protected:
     bool use_dma() const
     {
-#if defined(LGFX_USE_V1)
         return _panel_sprite.getSpriteBuffer()->use_dma();
-#else
-        return const_cast<SpriteBuffer*>(&_img)->use_dma();
-#endif
     }
 
     void makePaletteTable()
@@ -83,15 +74,10 @@ class GSprite4 : public GSprite
         while(len--) { *qp++ = *sp++; } // convert to 565
     }
 
-    GOBLIB_INLINE void push_sprite_to16(GLovyanGFX* dst, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
+    GOBLIB_INLINE void push_sprite_to16(LovyanGFX* dst, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
     {
-#if defined(LGFX_USE_V1)
         assert((getColorDepth() & ::lgfx::color_depth_t::bit_mask) == 4 && "Invalid src");
         assert((dst->getColorDepth() & ::lgfx::color_depth_t::bit_mask) == 16 && "Illegal target");
-#else
-        assert(getColorDepth() == 4 && "Invalid src");
-        assert(dst->getColorDepth() == 16 && "Illegal target");
-#endif
         
         ::lgfx::pixelcopy_t p(_img, dst->getColorDepth(), getColorDepth(), dst->hasPalette(), _palette, transp);
         p.fp_copy = (transp == ~0) ? fp_copy_4to16 : fp_copy_4to16_transp;
@@ -99,50 +85,39 @@ class GSprite4 : public GSprite
         dst->pushImage(x, y, width(), height(), &p, use_dma());
     }
 
-#if defined(LGFX_USE_V1)
     static std::uint32_t fp_copy_4to16(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param);
     static std::uint32_t fp_copy_4to16_transp(void* __restrict__ dst, std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* __restrict__ param);
     static std::uint32_t fp_skip_transp(std::uint32_t index, std::uint32_t last, ::lgfx::pixelcopy_t* param);
-#else
-    static std::int32_t fp_copy_4to16( void* __restrict__ dst, std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* __restrict__ param);
-    static std::int32_t fp_copy_4to16_transp( void* __restrict__ dst, std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* __restrict__ param);
-    static std::int32_t fp_skip_transp(std::int32_t index, std::int32_t last, ::lgfx::pixelcopy_t* param);
-#endif
     
-    ::lgfx::swap565_t   _table16[16];   //!< 4bit single pixel to 565 single pixel
-    std::uint32_t   _table256[256]; //!< 4bit double pixels to 565 double pixels
+    ::lgfx::swap565_t _table16 [16];   //!< 4bit single pixel to 565 single pixel
+    std::uint32_t     _table256[256]; //!< 4bit double pixels to 565 double pixels
 };
 
 /*!
   @brief Spcialized 4bit sprite for Cell animation.
 */
-class GCellSprite4 : public GSprite4
+class GCellSprite4 : public LGFX_Sprite4
 {
   public:
-    explicit GCellSprite4(GLovyanGFX* parent = nullptr) : GSprite4(parent) {}
-    GCellSprite4(std::int32_t w, std::int32_t h) : GSprite4(w,h) {}
+    explicit GCellSprite4(LovyanGFX* parent = nullptr) : LGFX_Sprite4(parent) {}
+    GCellSprite4(std::int32_t w, std::int32_t h) : LGFX_Sprite4(w,h) {}
     virtual ~GCellSprite4() {}
 
-    template<typename T> GOBLIB_INLINE void pushCellTo16(GLovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y, const T& transp)
+    template<typename T> GOBLIB_INLINE void pushCellTo16(LovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y, const T& transp)
     {
         push_cell(dst, r, x, y, _write_conv.convert(transp) & _write_conv.colormask);
     }
-    GOBLIB_INLINE void pushCellTo16(GLovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y)
+    GOBLIB_INLINE void pushCellTo16(LovyanGFX* dst, const CellRect& r, std::int32_t x, std::int32_t y)
     {
 
         push_cell(dst, r, x, y);
     }
 
   protected:
-    void push_cell(GLovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
+    void push_cell(LovyanGFX* dst, const CellRect& srect, std::int32_t x, std::int32_t y, std::uint32_t transp = ~0)
     {
-#if defined(LGFX_USE_V1)   
         assert((getColorDepth() & ::lgfx::color_depth_t::bit_mask) == 4 && "Invalid src");
         assert((dst->getColorDepth() & ::lgfx::color_depth_t::bit_mask) == 16 && "Illegal target");
-#else
-        assert(getColorDepth() == 4 && "Invalid src");
-        assert(dst->getColorDepth() == 16 && "Illegal target");
-#endif
         std::int32_t cx,cy,cw,ch;
         dst->getClipRect(&cx,&cy,&cw,&ch);
 
